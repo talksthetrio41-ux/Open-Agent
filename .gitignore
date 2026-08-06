@@ -1,0 +1,20 @@
+# Environment & sensitive credentials
+.env
+*.env
+
+# Browser session & profile data
+qwen_browser_data/
+
+# Python cache & artifacts
+__pycache__/
+*.pyc
+
+# Debug outputs & screenshots
+body.html
+chat_list.html
+*.png
+
+# IDE / system
+.DS_Store
+.vscode/
+.idea/
