@@ -11,14 +11,15 @@ from qwen_browser import QwenBrowserAutomator
 from qwen_web_client import QwenWebClient
 from harness import AgentHarness, SYSTEM_PROMPT
 
-async def run_agent_loop(task: str, use_playwright: bool = True, headful: bool = False, max_steps: int = 15):
+async def run_agent_loop(task: str, use_playwright: bool = True, headful: bool = False, max_steps: int = 15, workdir: str = "./sandbox", timeout: int = 120):
     print("=" * 70)
     print("   Qwen Autonomous Agentic Coding Harness")
     print(f"   Mode: {'PLAYWRIGHT BROWSER' if use_playwright else 'DIRECT HTTP API'}")
+    print(f"   Working Directory: {workdir}")
     print(f"   Task: {task}")
     print("=" * 70)
 
-    harness = AgentHarness(sandbox_dir="./sandbox")
+    harness = AgentHarness(sandbox_dir=workdir)
     automator = None
     client = None
 
@@ -68,8 +69,8 @@ async def run_agent_loop(task: str, use_playwright: bool = True, headful: bool =
             cmd = harness.extract_bash_command(full_reply)
             if cmd:
                 print(f"\n⚙️ [Harness] Extracted Action:\n```bash\n{cmd}\n```")
-                print("Running in sandbox...")
-                output = harness.execute_command(cmd)
+                print(f"Running in workdir ({workdir})...")
+                output = harness.execute_command(cmd, timeout=timeout)
                 print(f"\n📥 [Harness] Execution Output:\n{output}\n")
                 
                 # Feedback loop
@@ -92,6 +93,8 @@ if __name__ == "__main__":
     parser.add_argument("--api-mode", action="store_true", help="Run via direct HTTP API instead of Playwright browser")
     parser.add_argument("--headful", action="store_true", help="Run browser in headful mode")
     parser.add_argument("--max-steps", type=int, default=15, help="Maximum number of loop iterations")
+    parser.add_argument("--workdir", type=str, default="./sandbox", help="Working directory for agent execution (default: ./sandbox)")
+    parser.add_argument("--timeout", type=int, default=120, help="Per-command execution timeout in seconds (default: 120)")
     args = parser.parse_args()
 
     task_input = args.task
@@ -107,5 +110,7 @@ if __name__ == "__main__":
         task=task_input,
         use_playwright=use_playwright,
         headful=args.headful,
-        max_steps=args.max_steps
+        max_steps=args.max_steps,
+        workdir=args.workdir,
+        timeout=args.timeout
     ))

@@ -6,26 +6,28 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger("AgentHarness")
 
-SYSTEM_PROMPT = """You are an autonomous AI coding agent. You solve user coding tasks by executing bash commands and editing files inside a sandbox environment.
+SYSTEM_PROMPT = """You are an autonomous AI coding and execution agent with FULL shell and terminal access. You solve user tasks by executing bash commands, managing files, cloning repositories, installing packages, downloading datasets/models, and running scripts.
+
+### Available Capabilities & Tools:
+1. **Repository & Code Management**: `git clone`, `git checkout`, creating/editing files, directory navigation.
+2. **Package & Environment Management**: `pip install`, `npm install`, `apt-get`, environment inspection.
+3. **Data & Model Downloads**: `curl`, `wget`, `kaggle` CLI, `huggingface-cli`, `unzip`, `tar`.
+4. **Environment Tokens**: All environment tokens (e.g. `GITHUB_TOKEN`, `KAGGLE_USERNAME`, `KAGGLE_KEY`, `HF_TOKEN`) from the environment/.env are passed through directly to your commands.
+5. **Full Shell Capabilities**: You can execute any valid bash/shell command.
 
 ### Rules & Instructions:
-1. Break down the task into step-by-step actions.
+1. Break down the task into clear, step-by-step actions.
 2. Briefly explain your thought process before executing a step.
-3. If you need to execute bash commands (creating files, running code, running tests, checking directory contents), put the command in a single ```bash ... ``` block.
-4. **IMPORTANT**: Only output ONE ```bash ... ``` code block per response turn.
+3. Put the bash command(s) for each step inside a single ```bash ... ``` code block.
+4. **CRITICAL**: Only output ONE ```bash ... ``` code block per response turn.
 5. After outputting a ```bash``` block, stop and wait for the harness to execute it and return the command output.
 6. When the entire task is successfully completed and verified, include the text `<DONE>` in your final message.
 
 ### Example Interaction:
-Thought: I need to write a Python script that calculates factorials and test it.
+Thought: I will clone the repository and install its dependencies.
 ```bash
-cat << 'EOF' > test_factorial.py
-def factorial(n):
-    return 1 if n <= 1 else n * factorial(n - 1)
-
-print(factorial(5))
-EOF
-python3 test_factorial.py
+git clone https://github.com/example/repo.git
+cd repo && pip install -r requirements.txt
 ```
 """
 
@@ -69,10 +71,13 @@ class AgentHarness:
         logger.info(f"Executing command in sandbox ({self.sandbox_dir}):\n{command}")
         
         try:
+            # Pass full os.environ so process has access to KAGGLE_KEY, HF_TOKEN, GITHUB_TOKEN, etc.
+            env = os.environ.copy()
             process = subprocess.run(
                 command,
                 shell=True,
                 cwd=self.sandbox_dir,
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=timeout
