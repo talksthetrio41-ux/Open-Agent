@@ -208,9 +208,9 @@ class QwenBrowserAutomator:
                 yield "[Error: Could not locate chat input textarea in browser]"
                 return
 
-            await textarea.click()
-            await page.keyboard.type(prompt, delay=10)
-            await asyncio.sleep(1)
+            await textarea.focus()
+            await textarea.fill(prompt)
+            await asyncio.sleep(0.5)
 
             # 3. Click Send button
             send_btn = None
@@ -224,11 +224,15 @@ class QwenBrowserAutomator:
                 pass
 
             if send_btn:
-                await send_btn.click(force=True)
-                logger.info("Clicked Send button in Playwright browser UI.")
+                try:
+                    await send_btn.click(force=True)
+                    logger.info("Clicked Send button in Playwright browser UI.")
+                except Exception:
+                    await page.keyboard.press("Enter")
+                    logger.info("Fallback: Pressed Enter via keyboard in Playwright browser UI.")
             else:
-                await textarea.press("Enter")
-                logger.info("Pressed Enter on textarea in Playwright browser UI.")
+                await page.keyboard.press("Enter")
+                logger.info("Pressed Enter via keyboard in Playwright browser UI.")
 
             # Wait for post-click navigation/state update
             await asyncio.sleep(1.5)
@@ -248,6 +252,9 @@ class QwenBrowserAutomator:
                             if current_text and current_text != last_text:
                                 if current_text.startswith(last_text):
                                     delta = current_text[len(last_text):]
+                                elif len(current_text) > len(last_text) and last_text in current_text:
+                                    idx = current_text.find(last_text) + len(last_text)
+                                    delta = current_text[idx:]
                                 else:
                                     delta = current_text
                                 last_text = current_text

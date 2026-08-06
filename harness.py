@@ -52,12 +52,21 @@ class AgentHarness:
         # 1. Standard markdown ```bash ... ``` block
         match = re.search(r"```(?:bash|sh)?\n(.*?)```", text, re.DOTALL)
         if match:
-            return match.group(1).strip()
+            raw_code = match.group(1).strip()
+            lines = [l for l in raw_code.split("\n") if not l.strip().isdigit() and l.strip() not in ("bash", "sh")]
+            return "\n".join(lines).strip()
             
         # 2. Qwen UI DOM rendered block: "bash\n1\n2\n3...\n<code_lines>"
         match_ui = re.search(r"(?:^|\n)(?:bash|sh)\n((?:\d+\n)+)(.*)", text, re.DOTALL)
         if match_ui:
-            return match_ui.group(2).strip()
+            raw_code = match_ui.group(2).strip()
+            lines = []
+            for line in raw_code.split("\n"):
+                stripped = line.strip()
+                if stripped.isdigit() or stripped in ("bash", "sh"):
+                    continue
+                lines.append(line)
+            return "\n".join(lines).strip()
             
         return None
 
