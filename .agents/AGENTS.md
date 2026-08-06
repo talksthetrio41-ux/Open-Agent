@@ -62,3 +62,13 @@ This repository provides a reverse-engineered client, headless browser automatio
    ```bash
    python server.py
    ```
+
+---
+
+## Critical Implementation Notes & Gotchas
+
+- **Header Injection Warning**: DO NOT use `context.set_extra_http_headers({"Authorization": ...})` globally in Playwright. It causes Qwen's CDN resources and websockets to fail with CORS/Unauthorized errors, leaving the page unstyled and input disabled.
+- **Send Button Selector**: The Send button selector is `"button.send-button, button[aria-label='send' i]"`. Do not click the parent `.message-input-right-button-send` wrapper directly as it can trigger voice input if input state isn't registered.
+- **Stream Scoping**: Response polling must target `.qwen-markdown, .markdown-body` to avoid capturing UI buttons like `"Skip"`.
+- **Qwen UI Code Block Parsing**: `extract_bash_command` in `harness.py` normalizes non-breaking spaces `\xa0` to `" "` and strips Playwright DOM rendered line numbers (`1\n2\n3...`) and duplicate `bash`/`sh` headers.
+- **Subprocess Environment Pass-Through**: Always pass `env=os.environ.copy()` to `subprocess.run` to ensure CLI tools (`git`, `pip`, `npm`, `kaggle`, `huggingface-cli`) have access to `.env` tokens.
