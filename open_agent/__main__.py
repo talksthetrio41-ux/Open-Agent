@@ -57,6 +57,83 @@ def _print_box(url: str, pin: str, local: str) -> None:
     print()
 
 
+def _port_busy(port: int) -> bool:
+    import socket as _s
+
+    for family in (_s.AF_INET, _s.AF_INET6):
+        try:
+            with _s.socket(family, _s.SOCK_STREAM) as sock:
+                # No SO_REUSEADDR: a live LISTEN socket must fail the bind.
+                sock.bind(("0.0.0.0" if family == _s.AF_INET else "::", port))
+        except OSError:
+            return True
+    return False
+
+
+def _listener_pids(port: int) -> list[int]:
+    """PIDs holding a LISTEN socket on `port`, via /proc (Termux has no lsof)."""
+    inodes: set[str] = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(table, "r", encoding="utf-8") as fh:
+                next(fh, None)
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) > 9 and parts[3] == "0A":  # 0A = LISTEN
+                        local = parts[1]
+                        if int(local.rsplit(":", 1)[1], 16) == port:
+                            inodes.add(parts[9])
+        except OSError:
+            continue
+    if not inodes:
+        return []
+    me = os.getpid()
+    pids: list[int] = []
+    for pid_dir in os.listdir("/proc"):
+        if not pid_dir.isdigit() or int(pid_dir) == me:
+            continue
+        fd_dir = f"/proc/{pid_dir}/fd"
+        try:
+            for fd in os.listdir(fd_dir):
+                try:
+                    target = os.readlink(f"{fd_dir}/{fd}")
+                except OSError:
+                    continue
+                if target.startswith("socket:[") and target[8:-1] in inodes:
+                    pids.append(int(pid_dir))
+                    break
+        except OSError:
+            continue
+    return pids
+
+
+def _free_port(port: int) -> bool:
+    """Kill any stale Open Agent server still bound to `port`. Returns True when free."""
+    if not _port_busy(port):
+        return True
+    pids = _listener_pids(port)
+    if not pids:
+        return False
+    print(f"[!] Port {port} is held by stale process(es) {pids} — terminating")
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if not _port_busy(port):
+            return True
+        time.sleep(0.3)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    time.sleep(0.5)
+    return not _port_busy(port)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Open Agent — Termux GUI")
     parser.add_argument("--host", default=HOST)
@@ -97,6 +174,14 @@ def main(argv: list[str] | None = None) -> int:
                     break
             except Exception:
                 pass
+
+    # A previous `oa` instance may still hold the port (Errno 98) — and the
+    # tunnel would then serve the STALE server. Reclaim the port first.
+    if not _free_port(args.port):
+        print(f"[x] Port {args.port} is busy and could not be reclaimed.")
+        print(f"    Run:  kill $(ps aux | grep 'open_agent' | grep -v grep | awk '{{print $2}}')")
+        print(f"    or start on another port:  ./oa --port {args.port + 1}")
+        return 1
 
     use_tunnel = args.tunnel or (is_termux() and not args.no_tunnel)
     tunnel = None
