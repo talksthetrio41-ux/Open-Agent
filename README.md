@@ -1,45 +1,98 @@
-# Qwen Web Chat Streaming Client & Gateway
+# Open Agent
 
-This project provides a complete solution to stream flagship Qwen model responses from the **Qwen Web Chat platform** (`chat.qwen.ai`) directly to your terminal or custom platform via Playwright browser automation (bypassing Aliyun Cloud WAF).
+Free agentic coding on **Android / Termux**. It logs into [chat.qwen.ai](https://chat.qwen.ai) with Chromium, runs commands on the phone, and keeps files in **your GitHub repo**.
 
-## Features
+This is **not** a Cloudflare Pages site. The GUI is a local FastAPI server. Termux publishes it with a Cloudflare **quick tunnel** and prints the URL.
 
-- **Default Playwright Automation**: Bypasses Aliyun Cloud WAF automatically in both CLI and Server modes.
-- **Terminal Login Helper (`login.py`)**: Prompts for your Qwen email & password in the terminal, logs into `chat.qwen.ai`, captures the session token, and automatically updates `.env`.
-- **FastAPI SSE Gateway (`server.py`)**: Gateway API providing `/chat/stream`, `/chat/playwright-stream`, and OpenAI-compatible `/v1/chat/completions`.
-- **Interactive CLI (`cli.py`)**: Real-time terminal chat interface.
+## One-command install (Termux)
 
----
-
-## Quick Setup & Usage
-
-### 1. Extract Session Token via Terminal Login
-Run `login.py` in your terminal to enter your Qwen credentials and save your session token:
 ```bash
-python login.py
-```
-*(You will be prompted for your Qwen Email and Password. The script will output your session token and automatically save `QWEN_TOKEN` in `.env`)*
-
-If your account requires a Captcha or 2FA verification code, run in headful browser mode:
-```bash
-python login.py --headful
+curl -fsSL https://raw.githubusercontent.com/talksthetrio41-ux/Open-Agent/main/install.sh | bash
 ```
 
-### 2. Run Interactive Terminal CLI
-Stream responses directly in your terminal:
-```bash
-python cli.py
+The script installs git, Python, Chromium, and `cloudflared`, clones this repo to `~/open-agent`, then launches the agent. Termux prints something like:
+
+```
+Public GUI : https://xxxx.trycloudflare.com
+Unlock PIN : 4821
 ```
 
-### 3. Run FastAPI Streaming Gateway Server
-Launch the local streaming server on port 8000:
+1. Open the URL on the phone.
+2. Enter the PIN.
+3. Sign in with your **Qwen email + password** (first visit).
+4. Optional: Settings → paste a GitHub PAT + `owner/name` so file edits live in your repo.
+
+Later launches:
+
 ```bash
-python server.py
+~/open-agent/oa
 ```
 
-Stream responses from any application:
+## What it does
+
+| Need | How |
+|---|---|
+| Model | Free Qwen Chat via Chromium (no paid API key) |
+| Run code | Shell on this Android device (` ```bash `) |
+| Edit files | GitHub workspace (` ```github write/read/ls/delete/commit `) |
+| Search the web | Built into Qwen — no extra tool |
+| GUI | Mobile web UI over a Cloudflare tunnel |
+| Compact | Summarize the thread, start a **new** Qwen chat, paste the handoff |
+| Clear | Drop history and open a new Qwen chat |
+
+## GUI commands
+
+- **Compact** or `/compact` — prompt the model to compact history, reset the Qwen thread, seed the summary
+- **Clear** or `/clear` — new chat, no summary
+- `/stop` — cancel the current loop
+
+## Desktop / Linux (no Termux)
+
 ```bash
-curl -X POST http://localhost:8000/chat/stream \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Write a 3-line poem about space."}'
+git clone https://github.com/talksthetrio41-ux/Open-Agent.git
+cd Open-Agent
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+python -m playwright install chromium
+python -m open_agent --no-tunnel
 ```
+
+Open http://127.0.0.1:8765 and use the PIN printed in the terminal.
+
+```bash
+python -m pytest tests -q
+```
+
+## Project layout
+
+```
+install.sh                 one-shot Termux bootstrap
+oa                         launcher
+open_agent/                Python package
+  __main__.py              server + tunnel + PIN banner
+  server.py                FastAPI GUI / SSE API
+  agent.py                 agentic loop
+  harness.py               bash + github tool runner
+  github_fs.py             clone / edit / commit / push
+  qwen_browser.py          Playwright driver for chat.qwen.ai
+  prompts.py               system + compact prompts
+public/                    mobile GUI
+workspace/                 local clone of the linked GitHub repo
+```
+
+## Security
+
+- `.env` and `qwen_browser_data/` are gitignored (password, token, cookies).
+- The public tunnel is gated by a PIN printed only in Termux.
+- Never commit `GITHUB_TOKEN` or Qwen passwords.
+
+## Status
+
+- [x] One-command Termux install + Cloudflare tunnel URL
+- [x] Mobile GUI with Qwen login, Compact, Clear, GitHub settings
+- [x] Android sandbox shell + GitHub file tools
+- [x] System / compact / resume prompts
+- [ ] Optional extra free providers (DeepSeek web, etc.)
+- [ ] Termux:Widget / notification controls
+
+See `AGENTS.md` for Playwright gotchas and the tool protocol.

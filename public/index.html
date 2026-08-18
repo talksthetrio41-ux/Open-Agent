@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>Open Agent</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar" id="topbar">
+      <div class="brand">
+        <span class="logo-mark"><i class="fa-solid fa-bolt"></i></span>
+        <div class="brand-text">
+          <strong>Open Agent</strong>
+          <span id="status-line">Starting…</span>
+        </div>
+      </div>
+      <nav class="top-actions" aria-label="Session commands">
+        <button type="button" id="btn-compact" class="ghost" title="Compact history into a new Qwen chat">
+          <i class="fa-solid fa-compress"></i><span>Compact</span>
+        </button>
+        <button type="button" id="btn-clear" class="ghost" title="Start a new chat">
+          <i class="fa-solid fa-broom"></i><span>Clear</span>
+        </button>
+        <button type="button" id="btn-settings" class="ghost" title="Settings">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+      </nav>
+    </header>
+
+    <section class="chips" id="chips" aria-label="Connection status">
+      <span class="chip" id="chip-qwen"><i class="fa-solid fa-circle"></i> Qwen</span>
+      <span class="chip" id="chip-github"><i class="fa-brands fa-github"></i> GitHub</span>
+      <span class="chip" id="chip-step">step 0</span>
+    </section>
+
+    <main class="transcript" id="transcript" aria-live="polite"></main>
+
+    <form class="composer" id="composer">
+      <textarea id="prompt" rows="1" placeholder="Describe a task…  (/compact  /clear)" autocomplete="off"></textarea>
+      <button type="submit" id="btn-send" aria-label="Send">
+        <i class="fa-solid fa-arrow-up"></i>
+      </button>
+    </form>
+  </div>
+
+  <div class="modal hidden" id="modal-pin" role="dialog" aria-labelledby="pin-title">
+    <div class="sheet">
+      <h2 id="pin-title">Unlock Open Agent</h2>
+      <p>Enter the PIN printed in Termux when the tunnel started.</p>
+      <input id="pin-input" inputmode="numeric" maxlength="8" placeholder="PIN" autocomplete="one-time-code">
+      <p class="form-error" id="pin-error"></p>
+      <button type="button" class="primary" id="pin-submit">Unlock</button>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modal-qwen" role="dialog" aria-labelledby="qwen-title">
+    <div class="sheet">
+      <h2 id="qwen-title">Connect Qwen</h2>
+      <p>Sign in with your free <a href="https://chat.qwen.ai" target="_blank" rel="noopener">chat.qwen.ai</a> account. Chromium on this phone keeps the session.</p>
+      <label>Email<input id="qwen-user" type="email" autocomplete="username"></label>
+      <label>Password<input id="qwen-pass" type="password" autocomplete="current-password"></label>
+      <p class="form-error" id="qwen-error"></p>
+      <button type="button" class="primary" id="qwen-submit">
+        <i class="fa-solid fa-right-to-bracket"></i> Sign in &amp; connect
+      </button>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modal-settings" role="dialog" aria-labelledby="settings-title">
+    <div class="sheet">
+      <header class="sheet-head">
+        <h2 id="settings-title">Settings</h2>
+        <button type="button" class="icon-only" id="settings-close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <h3>Qwen account</h3>
+      <p class="muted" id="settings-qwen">Not connected</p>
+      <button type="button" class="secondary" id="settings-relink-qwen">Reconnect Qwen</button>
+      <h3>GitHub workspace</h3>
+      <p class="muted">Files the agent creates or edits live in your repo. Paste a personal access token (repo scope) and <code>owner/name</code>.</p>
+      <label>Personal access token<input id="gh-token" type="password" autocomplete="off" placeholder="ghp_…"></label>
+      <label>Repository<input id="gh-repo" type="text" placeholder="you/open-agent-workspace"></label>
+      <p class="form-error" id="gh-error"></p>
+      <button type="button" class="primary" id="gh-submit">Link &amp; clone</button>
+      <p class="muted" id="settings-gh"></p>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

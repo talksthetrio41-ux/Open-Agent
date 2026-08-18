@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Local launcher (repo root). Termux install.sh also writes one next to the clone.
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+if [ -f .venv/bin/activate ]; then
+  # shellcheck disable=SC1091
+  . .venv/bin/activate
+fi
+exec python3 -m open_agent "$@"
