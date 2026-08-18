@@ -92,16 +92,21 @@ def create_app() -> FastAPI:
         return {"ok": True, "service": "open-agent"}
 
     @app.post("/api/unlock")
-    async def unlock(body: PinBody):
+    async def unlock(body: PinBody, request: Request):
         pin = ensure_access_pin()
         if (body.pin or "").strip() != pin:
             raise HTTPException(status_code=403, detail="Wrong PIN")
         resp = JSONResponse({"ok": True})
+        # Cloudflare quick tunnels are HTTPS. Mark the cookie Secure so
+        # mobile Chrome actually stores it after unlock.
+        forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+        secure = request.url.scheme == "https" or forwarded == "https"
         resp.set_cookie(
             SESSION_COOKIE,
             _session_token(pin),
             httponly=True,
             samesite="lax",
+            secure=secure,
             max_age=60 * 60 * 24 * 14,
         )
         return resp

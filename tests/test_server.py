@@ -27,3 +27,17 @@ def test_pin_gate_and_unlock():
     body = state.json()
     assert "github_linked" in body
     assert "messages" in body
+
+
+def test_unlock_sets_secure_cookie_behind_https_proxy():
+    client = TestClient(app)
+    pin = ensure_access_pin()
+    ok = client.post(
+        "/api/unlock",
+        json={"pin": pin},
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    assert ok.status_code == 200
+    set_cookie = ",".join(ok.headers.get_list("set-cookie")).lower()
+    assert "oa_session=" in set_cookie
+    assert "secure" in set_cookie

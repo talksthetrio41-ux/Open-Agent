@@ -1,11 +1,19 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # Open Agent — one-shot Termux installer
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/talksthetrio41-ux/Open-Agent/main/install.sh | bash
 # or, from a clone:
 #   bash install.sh
+#
+# Playwright has NO wheels for Android (aarch64-linux-android). This
+# script must never `pip install playwright` inside Termux.
 
 set -euo pipefail
+
+# Re-exec under bash only when this is a real file (not `curl | sh`).
+if [ -z "${BASH_VERSION:-}" ] && command -v bash >/dev/null 2>&1 && [ -f "$0" ]; then
+  exec bash "$0" "$@"
+fi
 
 REPO_URL="${OPEN_AGENT_REPO:-https://github.com/talksthetrio41-ux/Open-Agent.git}"
 INSTALL_DIR="${OPEN_AGENT_HOME:-$HOME/open-agent}"
@@ -24,31 +32,50 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+merge_env_kv() {
+  # merge_env_kv KEY VALUE  — upsert into .env without duplicating
+  local key="$1"
+  local value="$2"
+  local env_file="${3:-.env}"
+  touch "$env_file"
+  if grep -q "^${key}=" "$env_file" 2>/dev/null; then
+    # portable in-place replace
+    local tmp
+    tmp="$(mktemp)"
+    awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^"k"=" {print k"="v; done=1; next} {print} END{if(!done) print k"="v}' \
+      "$env_file" > "$tmp"
+    mv "$tmp" "$env_file"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$env_file"
+  fi
+}
+
 c_info "Open Agent installer"
 echo "    target : $INSTALL_DIR"
 echo "    source : $REPO_URL"
 
 if is_termux; then
   c_info "Termux detected — installing packages (pkg)"
-  # Prevent interactive prompts
   export DEBIAN_FRONTEND=noninteractive
   pkg update -y || true
-  pkg install -y git python python-pip clang make pkg-config \
-    libffi openssl rust binutils which curl wget \
-    chromium cloudflared termux-api 2>/dev/null \
-    || pkg install -y git python python-pip clang make pkg-config \
-         libffi openssl which curl wget
+
+  # Core tools first. Do NOT install rust just to compile Playwright —
+  # Playwright cannot be installed on Android at all.
+  pkg install -y git python python-pip which curl wget \
+    libffi openssl termux-api || \
+    pkg install -y git python which curl wget
+
+  # Chromium lives in x11-repo. Enable it *before* asking for chromium.
+  if ! need_cmd chromium && ! need_cmd chromium-browser; then
+    c_info "Enabling x11-repo for Chromium"
+    pkg install -y x11-repo || true
+    pkg install -y chromium || c_warn "Install chromium later: pkg install x11-repo && pkg install chromium"
+  fi
 
   if ! need_cmd cloudflared; then
     c_warn "cloudflared missing — enabling tur-repo and retrying"
     pkg install -y tur-repo || true
-    pkg install -y cloudflared || c_warn "Install cloudflared later: pkg install cloudflared"
-  fi
-
-  if ! need_cmd chromium && ! need_cmd chromium-browser; then
-    c_warn "Chromium missing — trying x11-repo"
-    pkg install -y x11-repo || true
-    pkg install -y chromium || c_warn "Install chromium later: pkg install chromium"
+    pkg install -y cloudflared || c_warn "Install cloudflared later: pkg install tur-repo && pkg install cloudflared"
   fi
 else
   c_warn "Not running inside Termux. Will install Python deps only."
@@ -82,19 +109,42 @@ c_info "Python virtualenv + dependencies"
 # shellcheck disable=SC1091
 . .venv/bin/activate
 pip install --upgrade pip wheel setuptools
-pip install -r requirements.txt
 
-# Playwright's bundled Chromium is huge on Android and often fails.
-# Prefer the system Chromium we just installed; still try Playwright browsers on desktop.
 if is_termux; then
+  # CRITICAL: never pip-install playwright on Android.
+  # PyPI has no aarch64-linux-android wheel (from versions: none).
   export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+  REQ_FILE="requirements-termux.txt"
+  if [ ! -f "$REQ_FILE" ]; then
+    c_warn "$REQ_FILE missing — installing a Playwright-free subset"
+    pip install 'httpx>=0.27.0' 'fastapi>=0.110.0' 'uvicorn>=0.28.0' \
+      'pydantic>=2.6.0' 'sse-starlette>=2.0.0' 'python-dotenv>=1.0.0' \
+      'aiofiles>=23.2.1' 'websockets>=12.0' 'pytest>=8.0.0'
+  else
+    pip install -r "$REQ_FILE"
+  fi
+
   CHROME_PATH="$(command -v chromium-browser || command -v chromium || true)"
+  if [ -z "${CHROME_PATH:-}" ]; then
+    PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
+    for candidate in \
+      "$PREFIX_DIR/bin/chromium-browser" \
+      "$PREFIX_DIR/bin/chromium" \
+      "$PREFIX_DIR/lib/chromium/chromium"; do
+      if [ -x "$candidate" ]; then
+        CHROME_PATH="$candidate"
+        break
+      fi
+    done
+  fi
   if [ -n "${CHROME_PATH:-}" ]; then
-    echo "CHROMIUM_PATH=$CHROME_PATH" >> .env.partial
-    echo "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1" >> .env.partial
     c_ok "Using system Chromium: $CHROME_PATH"
+  else
+    c_warn "Chromium binary not found. GUI login will fail until: pkg install x11-repo && pkg install chromium"
   fi
 else
+  c_info "Installing desktop Python deps (includes Playwright)"
+  pip install -r requirements.txt
   c_info "Installing Playwright Chromium (desktop)"
   python -m playwright install chromium || c_warn "playwright install chromium failed — set CHROMIUM_PATH"
 fi
@@ -103,13 +153,15 @@ if [ ! -f .env ]; then
   cp .env.example .env
   chmod 600 .env || true
 fi
-if [ -f .env.partial ]; then
-  # merge chromium path if not already set
-  if ! grep -q '^CHROMIUM_PATH=' .env 2>/dev/null; then
-    cat .env.partial >> .env
+
+if is_termux; then
+  merge_env_kv PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD 1 .env
+  merge_env_kv OPEN_AGENT_BROWSER cdp .env
+  if [ -n "${CHROME_PATH:-}" ]; then
+    merge_env_kv CHROMIUM_PATH "$CHROME_PATH" .env
   fi
-  rm -f .env.partial
 fi
+chmod 600 .env || true
 
 # Convenience launcher
 cat > "$INSTALL_DIR/oa" << 'LAUNCH'
@@ -120,7 +172,11 @@ if [ -f .venv/bin/activate ]; then
   # shellcheck disable=SC1091
   . .venv/bin/activate
 fi
-exec python -m open_agent "$@"
+# Prefer python from the venv; fall back to python3
+if command -v python >/dev/null 2>&1; then
+  exec python -m open_agent "$@"
+fi
+exec python3 -m open_agent "$@"
 LAUNCH
 chmod +x "$INSTALL_DIR/oa"
 
@@ -140,6 +196,10 @@ echo "      $INSTALL_DIR/oa"
 echo
 echo "  The GUI URL and unlock PIN will print here after the tunnel starts."
 echo
+if is_termux; then
+  echo "  Android uses system Chromium over CDP (Playwright is not installed)."
+  echo
+fi
 
 # Auto-start unless SKIP_START=1
 if [ "${SKIP_START:-0}" != "1" ]; then

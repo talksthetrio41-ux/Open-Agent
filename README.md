@@ -1,6 +1,6 @@
 # Open Agent
 
-Free agentic coding on **Android / Termux**. It logs into [chat.qwen.ai](https://chat.qwen.ai) with Chromium, runs commands on the phone, and keeps files in **your GitHub repo**.
+Free agentic coding on **Android / Termux**. It logs into [chat.qwen.ai](https://chat.qwen.ai) with **system Chromium** (Chrome DevTools Protocol — Playwright has no Android wheels), runs commands on the phone, and keeps files in **your GitHub repo**.
 
 This is **not** a Cloudflare Pages site. The GUI is a local FastAPI server. Termux publishes it with a Cloudflare **quick tunnel** and prints the URL.
 
@@ -10,7 +10,7 @@ This is **not** a Cloudflare Pages site. The GUI is a local FastAPI server. Term
 curl -fsSL https://raw.githubusercontent.com/talksthetrio41-ux/Open-Agent/main/install.sh | bash
 ```
 
-The script installs git, Python, Chromium, and `cloudflared`, clones this repo to `~/open-agent`, then launches the agent. Termux prints something like:
+The script enables `x11-repo` / `tur-repo`, installs git, Python, Chromium, and `cloudflared`, clones this repo to `~/open-agent`, installs **`requirements-termux.txt`** (never Playwright), then launches the agent. Termux prints something like:
 
 ```
 Public GUI : https://xxxx.trycloudflare.com
@@ -32,7 +32,7 @@ Later launches:
 
 | Need | How |
 |---|---|
-| Model | Free Qwen Chat via Chromium (no paid API key) |
+| Model | Free Qwen Chat via system Chromium + CDP (no paid API key) |
 | Run code | Shell on this Android device (` ```bash `) |
 | Edit files | GitHub workspace (` ```github write/read/ls/delete/commit `) |
 | Search the web | Built into Qwen — no extra tool |
@@ -66,15 +66,19 @@ python -m pytest tests -q
 ## Project layout
 
 ```
-install.sh                 one-shot Termux bootstrap
+install.sh                 one-shot Termux bootstrap (no Playwright on Android)
 oa                         launcher
+requirements-termux.txt    Android pip deps (no Playwright)
+requirements.txt           desktop pip deps (includes Playwright)
 open_agent/                Python package
   __main__.py              server + tunnel + PIN banner
   server.py                FastAPI GUI / SSE API
   agent.py                 agentic loop
   harness.py               bash + github tool runner
   github_fs.py             clone / edit / commit / push
-  qwen_browser.py          Playwright driver for chat.qwen.ai
+  cdp.py                   Chrome DevTools Protocol client (Termux)
+  qwen_browser.py          Qwen driver (CDP on Android, Playwright on desktop)
+  config.py                prefer_cdp / Chromium paths
   prompts.py               system + compact prompts
 public/                    mobile GUI
 workspace/                 local clone of the linked GitHub repo
@@ -92,7 +96,8 @@ workspace/                 local clone of the linked GitHub repo
 - [x] Mobile GUI with Qwen login, Compact, Clear, GitHub settings
 - [x] Android sandbox shell + GitHub file tools
 - [x] System / compact / resume prompts
+- [x] CDP backend so Termux never needs Playwright
 - [ ] Optional extra free providers (DeepSeek web, etc.)
 - [ ] Termux:Widget / notification controls
 
-See `AGENTS.md` for Playwright gotchas and the tool protocol.
+See `AGENTS.md` for CDP / Playwright gotchas and the tool protocol.

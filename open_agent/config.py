@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +34,34 @@ def is_termux() -> bool:
     if "com.termux" in prefix:
         return True
     return Path("/data/data/com.termux").exists()
+
+
+def is_android() -> bool:
+    if is_termux():
+        return True
+    if hasattr(sys, "getandroidapilevel"):
+        return True
+    return Path("/system/build.prop").exists()
+
+
+def prefer_cdp() -> bool:
+    """Playwright has no wheels / driver for Android (Bionic, aarch64-linux-android).
+
+    Force with OPEN_AGENT_BROWSER=cdp|playwright.
+    """
+    forced = get_env("OPEN_AGENT_BROWSER").lower()
+    if forced in {"cdp", "chromium", "devtools"}:
+        return True
+    if forced == "playwright":
+        return False
+    if is_android():
+        return True
+    try:
+        import playwright  # noqa: F401
+
+        return False
+    except ImportError:
+        return True
 
 
 def ensure_dirs() -> None:
@@ -82,6 +111,8 @@ def find_chromium() -> Optional[str]:
     extra_paths = [
         f"{termux_prefix}/bin/chromium-browser",
         f"{termux_prefix}/bin/chromium",
+        f"{termux_prefix}/lib/chromium/chromium",
+        f"{termux_prefix}/lib/chromium/chromium-browser",
         "/usr/bin/chromium-browser",
         "/usr/bin/chromium",
         "/usr/bin/google-chrome",

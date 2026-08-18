@@ -1,15 +1,23 @@
-"""Playwright driver for chat.qwen.ai — Termux/Android aware."""
+"""Qwen chat.qwen.ai driver.
+
+Desktop uses Playwright. Android/Termux has no Playwright wheels
+(aarch64-linux-android), so we drive system Chromium over CDP instead.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-from typing import AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 
-from playwright.async_api import BrowserContext, Page, async_playwright
-
-from open_agent.config import BROWSER_DATA_DIR, find_chromium, get_env, write_env
+from open_agent.config import (
+    BROWSER_DATA_DIR,
+    find_chromium,
+    get_env,
+    prefer_cdp,
+    write_env,
+)
 
 logger = logging.getLogger("QwenBrowser")
 
@@ -52,10 +60,12 @@ class QwenBrowserAutomator:
         self.username = get_env("QWEN_USERNAME")
         self.password = get_env("QWEN_PASSWORD")
         self._playwright = None
-        self._context: Optional[BrowserContext] = None
+        self._cdp_chrome = None
+        self._use_cdp = prefer_cdp()
+        self._context: Any = None
         self.captured_token: Optional[str] = self.token
         self.captured_cookies: Dict[str, str] = {}
-        self._page: Optional[Page] = None
+        self._page: Any = None
         self._lock = asyncio.Lock()
 
     def set_credentials(self, username: str, password: str) -> None:
@@ -93,11 +103,55 @@ class QwenBrowserAutomator:
         return kwargs
 
     async def start(self) -> None:
-        if self._playwright:
+        if self._context is not None:
             return
         os.makedirs(self.user_data_dir, exist_ok=True)
-        self._playwright = await async_playwright().start()
+        if self._use_cdp:
+            await self._start_cdp()
+        else:
+            await self._start_playwright()
+
+        if self.cookie_str:
+            try:
+                parsed = self._parse_cookie_string(self.cookie_str)
+                if parsed:
+                    await self._context.add_cookies(parsed)
+            except Exception as exc:
+                logger.warning("Failed setting cookies: %s", exc)
+
+        self._context.on("request", self._handle_request)
+        logger.info("%s Chromium session ready.", "CDP" if self._use_cdp else "Playwright")
+
+    async def _start_cdp(self) -> None:
+        from open_agent.cdp import CdpChrome, CdpError
+
+        exe = find_chromium()
+        if not exe:
+            raise CdpError(
+                "Chromium not found. On Termux run: "
+                "pkg install x11-repo && pkg install chromium"
+            )
+        chrome = CdpChrome(
+            executable=exe,
+            user_data_dir=self.user_data_dir,
+            headless=self.headless,
+            extra_args=list(BROWSER_ARGS),
+        )
+        await chrome.launch()
+        self._cdp_chrome = chrome
+        self._context = chrome
+        self._use_cdp = True
+
+    async def _start_playwright(self) -> None:
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            logger.warning("Playwright missing (%s); falling back to CDP.", exc)
+            await self._start_cdp()
+            return
+
         launch = self._launch_kwargs()
+        self._playwright = await async_playwright().start()
         try:
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
@@ -116,17 +170,6 @@ class QwenBrowserAutomator:
                 ignore_https_errors=True,
             )
 
-        if self.cookie_str:
-            try:
-                parsed = self._parse_cookie_string(self.cookie_str)
-                if parsed:
-                    await self._context.add_cookies(parsed)
-            except Exception as exc:
-                logger.warning("Failed setting cookies: %s", exc)
-
-        self._context.on("request", self._handle_request)
-        logger.info("Playwright Chromium session ready.")
-
     def _handle_request(self, request) -> None:
         headers = request.headers
         if "authorization" in headers and not self.captured_token:
@@ -135,7 +178,7 @@ class QwenBrowserAutomator:
                 self.captured_token = auth
                 logger.info("Captured Authorization token %s…", auth[:24])
 
-    async def _persist_session(self, page: Page) -> None:
+    async def _persist_session(self, page: Any) -> None:
         try:
             cookies = await self._context.cookies()
             self.captured_cookies = {c["name"]: c["value"] for c in cookies}
@@ -155,7 +198,7 @@ class QwenBrowserAutomator:
         if self.captured_token:
             write_env("QWEN_TOKEN", self.captured_token)
 
-    async def is_logged_in(self, page: Optional[Page] = None) -> bool:
+    async def is_logged_in(self, page: Optional[Any] = None) -> bool:
         target = page or self._page
         if target is None or target.is_closed():
             return False
@@ -175,7 +218,7 @@ class QwenBrowserAutomator:
         except Exception:
             return False
 
-    async def _ensure_logged_in(self, page: Page) -> bool:
+    async def _ensure_logged_in(self, page: Any) -> bool:
         login_btn = await page.query_selector(
             "button:has-text('Log in'), button.header-right-auth-button"
         )
@@ -251,7 +294,7 @@ class QwenBrowserAutomator:
         self._page = None
         logger.info("Chat thread reset.")
 
-    async def _dismiss_cookie(self, page: Page) -> None:
+    async def _dismiss_cookie(self, page: Any) -> None:
         try:
             btn = await page.query_selector(
                 "button:has-text('Accept all cookies'), .index-module__cookie-confirm-btn___T"
@@ -262,7 +305,7 @@ class QwenBrowserAutomator:
         except Exception:
             pass
 
-    async def _ensure_page(self) -> Page:
+    async def _ensure_page(self) -> Any:
         await self.start()
         if self._page is None or self._page.is_closed():
             self._page = await self._context.new_page()
@@ -301,7 +344,6 @@ class QwenBrowserAutomator:
         try:
             textarea = await page.wait_for_selector(input_selector, timeout=20_000)
         except Exception:
-            # Session may have expired mid-run
             logged = await self._ensure_logged_in(page)
             if not logged:
                 yield "[Error: Not logged in to Qwen. Open Settings and connect your account.]"
@@ -313,7 +355,6 @@ class QwenBrowserAutomator:
                 return
 
         await textarea.focus()
-        # fill() is faster and more reliable than type() for long system prompts
         await textarea.fill(prompt)
         await asyncio.sleep(0.4)
 
@@ -378,16 +419,23 @@ class QwenBrowserAutomator:
             except Exception:
                 pass
         self._page = None
-        if self._context:
+        if self._cdp_chrome is not None:
+            try:
+                await self._cdp_chrome.close()
+            except Exception:
+                pass
+            self._cdp_chrome = None
+            self._context = None
+        elif self._context:
             try:
                 await self._context.close()
             except Exception:
                 pass
-        if self._playwright:
+        if self._playwright is not None:
             try:
                 await self._playwright.stop()
             except Exception:
                 pass
         self._playwright = None
         self._context = None
-        logger.info("Closed Playwright session.")
+        logger.info("Closed browser session.")

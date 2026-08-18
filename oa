@@ -6,4 +6,7 @@ if [ -f .venv/bin/activate ]; then
   # shellcheck disable=SC1091
   . .venv/bin/activate
 fi
+if command -v python >/dev/null 2>&1; then
+  exec python -m open_agent "$@"
+fi
 exec python3 -m open_agent "$@"
