@@ -204,8 +204,8 @@ if is_termux; then
   fi
 
   CHROME_PATH="$(command -v chromium-browser || command -v chromium || true)"
+  PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
   if [ -z "${CHROME_PATH:-}" ]; then
-    PREFIX_DIR="${PREFIX:-/data/data/com.termux/files/usr}"
     for candidate in \
       "$PREFIX_DIR/bin/chromium-browser" \
       "$PREFIX_DIR/bin/chromium" \
@@ -216,6 +216,14 @@ if is_termux; then
       fi
     done
   fi
+  # A partial pkg upgrade can leave the real binary without its exec bit
+  # (wrapper then dies with exit 126 'Permission denied'). Self-heal.
+  for real_bin in "$PREFIX_DIR/lib/chromium/chrome" "$PREFIX_DIR/lib/chromium/chromium"; do
+    if [ -f "$real_bin" ] && [ ! -x "$real_bin" ]; then
+      c_warn "$real_bin lost its exec bit — restoring"
+      chmod 755 "$real_bin" || c_warn "chmod failed — run: pkg reinstall chromium"
+    fi
+  done
   if [ -n "${CHROME_PATH:-}" ]; then
     c_ok "Using system Chromium: $CHROME_PATH"
   else

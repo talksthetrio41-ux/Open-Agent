@@ -590,11 +590,16 @@ class CdpChrome:
         os.makedirs(self.user_data_dir, exist_ok=True)
         self.port = free_port()
         self.http_base = f"http://127.0.0.1:{self.port}"
-        attempts = self._flag_sets()
+        attempts = self._attempts()
         last_err: Optional[Exception] = None
-        for args in attempts:
+        for attempt in attempts:
             try:
-                await self._spawn(args, timeout=timeout)
+                await self._spawn(
+                    attempt["args"],
+                    timeout=timeout,
+                    executable=attempt.get("exe"),
+                    strip_ldpreload=bool(attempt.get("strip")),
+                )
                 return
             except Exception as exc:
                 last_err = exc
@@ -602,10 +607,37 @@ class CdpChrome:
                 self._kill()
         raise CdpError(
             f"Could not start Chromium at {self.executable}. "
-            f"Last error: {last_err}. On Termux: pkg install x11-repo && pkg install chromium"
+            f"Last error: {last_err}. Diagnostics: {self._diagnostics()}. "
+            f"If the binary lost its exec bit, run: pkg reinstall chromium "
+            f"(pkg install x11-repo first if needed). Full log: {self.log_path}"
         )
 
-    def _flag_sets(self) -> List[List[str]]:
+    def _direct_binary(self) -> Optional[str]:
+        """The real ELF behind the chromium-browser wrapper script."""
+        try:
+            parent = Path(self.executable).resolve().parent
+        except OSError:
+            parent = Path(self.executable).parent
+        prefix = parent.parent
+        for name in ("chrome", "chromium", "chrome_headless_shell"):
+            candidate = prefix / "lib" / "chromium" / name
+            if candidate.exists():
+                return str(candidate)
+        return None
+
+    def _attempts(self) -> List[Dict[str, Any]]:
+        """(executable, args, strip LD_PRELOAD) strategies, best first.
+
+        Android needs a matrix because of two opposing constraints observed
+        in the field:
+        - With LD_PRELOAD=libtermux-exec.so kept, the wrapper's exec of the
+          real binary works, but Chromium's crashpad/zygote re-exec of
+          /proc/self/exe dies with 'CANNOT LINK EXECUTABLE ... not
+          accessible for the namespace'. Hence --disable-crash-reporter and
+          single-process/no-zygote first.
+        - With LD_PRELOAD stripped, some devices instead fail at the wrapper
+          exec with EACCES (126). So each flag set is tried both ways.
+        """
         base = list(ANDROID_CHROME_ARGS if is_android() else [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -621,39 +653,66 @@ class CdpChrome:
             "--remote-debugging-address=127.0.0.1",
         ]
         base += self.extra_args
-        sets = []
+
         if self.headless:
             if is_android():
-                # --single-process often crashes while NAVIGATING heavy SPAs
-                # (chat.qwen.ai), which surfaced as "All connection attempts
-                # failed" at login. Prefer multi-process headless first.
-                sets.append(base + ["--headless=new", "--no-zygote"])
-                sets.append(base + ["--headless=new", "--single-process", "--no-zygote"])
-                sets.append(base + ["--headless", "--single-process", "--no-zygote"])
-                sets.append(base + ["--headless=new"])
-                sets.append(base + ["--headless"])
+                flag_sets = [
+                    ["--headless=new", "--single-process", "--no-zygote", "--in-process-gpu"],
+                    ["--headless=new", "--no-zygote"],
+                    ["--headless", "--single-process", "--no-zygote"],
+                    ["--headless=new"],
+                    ["--headless"],
+                ]
             else:
-                sets.append(base + ["--headless=new"])
-                sets.append(base + ["--headless"])
+                flag_sets = [["--headless=new"], ["--headless"]]
         else:
-            if is_android():
-                sets.append(base + ["--single-process", "--no-zygote"])
-            sets.append(list(base))
-        return sets
+            flag_sets = [["--single-process", "--no-zygote"]] if is_android() else []
+            flag_sets.append([])
 
-    async def _spawn(self, args: List[str], timeout: float) -> None:
-        cmd = [self.executable, *args, "about:blank"]
-        logger.info("Launching Chromium: %s", " ".join(cmd[:6]) + " …")
+        attempts: List[Dict[str, Any]] = []
+        for flags in flag_sets:
+            attempts.append({"exe": self.executable, "args": base + flags, "strip": False})
+        if is_android():
+            direct = self._direct_binary()
+            if direct and direct != self.executable:
+                for flags in flag_sets:
+                    attempts.append({"exe": direct, "args": base + flags, "strip": False})
+            for flags in flag_sets:
+                attempts.append({"exe": self.executable, "args": base + flags, "strip": True})
+        return attempts
+
+    def _diagnostics(self) -> str:
+        lines = []
+        paths = {self.executable}
+        direct = self._direct_binary()
+        if direct:
+            paths.add(direct)
+        for path in sorted(paths):
+            try:
+                st = os.stat(path)
+                lines.append(f"{path}: mode {oct(st.st_mode & 0o777)}")
+            except OSError as exc:
+                lines.append(f"{path}: {exc}")
+        try:
+            with open("/sys/fs/selinux/enforce", "r", encoding="utf-8") as fh:
+                lines.append(f"SELinux enforce={fh.read().strip()}")
+        except OSError:
+            pass
+        return " | ".join(lines)
+
+    async def _spawn(self, args: List[str], timeout: float, executable: Optional[str] = None, strip_ldpreload: bool = False) -> None:
+        exe = executable or self.executable
+        cmd = [exe, *args, "about:blank"]
+        logger.info("Launching Chromium: %s %s", exe, "strip-LD_PRELOAD" if strip_ldpreload else "")
         env = os.environ.copy()
         # Headless Chromium on Termux still probes DISPLAY; a dummy value avoids a hard abort.
         env.setdefault("DISPLAY", ":0")
-        if is_android():
+        if strip_ldpreload:
             # Termux globally sets LD_PRELOAD=$PREFIX/lib/libtermux-exec.so.
             # Chromium re-execs /proc/self/exe inside the Android runtime
             # linker namespace, where Termux libs are NOT accessible:
             #   CANNOT LINK EXECUTABLE "/proc/self/exe": library
             #   ".../libtermux-exec.so" ... is not accessible for the namespace
-            # Strip it for the browser process tree.
             env.pop("LD_PRELOAD", None)
         # Chromium is very chatty on stderr. A PIPE nobody drains deadlocks the
         # browser once the buffer fills (launch then "times out" for no reason).

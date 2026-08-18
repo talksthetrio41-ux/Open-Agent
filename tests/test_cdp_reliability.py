@@ -33,11 +33,22 @@ def test_http_helpers_wrap_connection_errors():
     assert CDP.count("self._dead_error(exc)") >= 2
 
 
-def test_android_prefers_multiprocess_headless():
-    new_no_zygote = CDP.find('"--headless=new", "--no-zygote"')
-    single = CDP.find('"--headless=new", "--single-process", "--no-zygote"')
-    assert new_no_zygote != -1 and single != -1
-    assert new_no_zygote < single
+def test_android_strategy_matrix():
+    """Both env variants must be tried: keeping LD_PRELOAD (wrapper exec
+    fails with EACCES on some devices when stripped) and stripping it
+    (crashpad/zygote re-exec fails with 'CANNOT LINK EXECUTABLE' when kept).
+    Single-process+in-process-gpu first to avoid the re-exec entirely."""
+    assert "def _attempts" in CDP
+    assert '"--headless=new", "--single-process", "--no-zygote", "--in-process-gpu"' in CDP
+    assert CDP.count('"strip": False') >= 2
+    assert CDP.count('"strip": True') >= 1
+    assert "_direct_binary" in CDP
+
+
+def test_launch_failure_includes_diagnostics():
+    assert "def _diagnostics" in CDP
+    assert "Diagnostics:" in CDP
+    assert "pkg reinstall chromium" in CDP
 
 
 def test_login_retries_after_relaunch():
@@ -59,8 +70,15 @@ def test_ensure_page_retries():
 def test_ld_preload_stripped_on_android():
     """Termux's LD_PRELOAD=libtermux-exec.so breaks Chromium's re-exec of
     /proc/self/exe ('CANNOT LINK EXECUTABLE ... not accessible for the
-    namespace'). It must be stripped from the browser environment."""
+    namespace'). Stripping must be available as a launch strategy."""
     assert 'env.pop("LD_PRELOAD", None)' in CDP
+    assert "strip_ldpreload" in CDP
+
+
+def test_installer_restores_chromium_exec_bit():
+    install = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "lost its exec bit" in install
+    assert 'chmod 755 "$real_bin"' in install
 
 
 def test_crashpad_noise_disabled():
