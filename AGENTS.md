@@ -123,6 +123,8 @@ On first visit the GUI asks for **Qwen email + password**. Session cookies live 
 - Chromium binary may be `$PREFIX/lib/chromium/chromium`, not only `$PREFIX/bin/chromium`.
 - The public tunnel is HTTPS. `/api/unlock` must set `Secure` on the PIN cookie when `X-Forwarded-Proto: https` so mobile Chrome keeps the session.
 - `install.sh` must only re-exec bash via `$0` when `$0` is a real file (safe for `curl | bash`).
+- `install.sh` and `oa` must update code with `fetch --depth 1` + `reset --hard origin/$BRANCH` — never `pull --ff-only … || true`, which silently leaves stale code on the device (this is how the top-level `import playwright` crash survived after its fix). `.env` and `qwen_browser_data/` are untracked, so the reset is safe. `OA_NO_UPDATE=1` opts out.
+- `install.sh` self-heals: if `open_agent/qwen_browser.py` has a top-level playwright import after checkout, force a fresh clone.
 
 ---
 

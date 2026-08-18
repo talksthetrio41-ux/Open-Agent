@@ -2,6 +2,17 @@
 # Local launcher (repo root). Termux install.sh also writes one next to the clone.
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+# Best-effort self-update so bug fixes actually reach the device.
+# Skip with OA_NO_UPDATE=1 (offline / local edits you want to keep).
+if [ -z "${OA_NO_UPDATE:-}" ] && [ -d .git ] && command -v git >/dev/null 2>&1; then
+  BRANCH="${OPEN_AGENT_BRANCH:-main}"
+  if git fetch --depth 1 origin "$BRANCH" >/dev/null 2>&1 && \
+     git reset --hard "origin/$BRANCH" >/dev/null 2>&1; then
+    echo "[*] Code is up to date ($(git rev-parse --short HEAD 2>/dev/null))"
+  else
+    echo "[!] Update check failed (offline?) — running local copy"
+  fi
+fi
 if [ -f .venv/bin/activate ]; then
   # shellcheck disable=SC1091
   . .venv/bin/activate

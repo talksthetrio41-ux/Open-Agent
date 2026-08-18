@@ -96,18 +96,45 @@ fi
 
 PYTHON_BIN="$(command -v python3 || command -v python)"
 
-if [ -d "$INSTALL_DIR/.git" ]; then
-  c_info "Updating existing clone"
-  git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH" || true
-  git -C "$INSTALL_DIR" checkout "$BRANCH" || true
-  git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH" || true
-else
-  c_info "Cloning Open Agent"
+fresh_clone() {
+  c_info "Cloning Open Agent (fresh)"
   rm -rf "$INSTALL_DIR"
   git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+}
+
+if [ -d "$INSTALL_DIR/.git" ]; then
+  c_info "Updating existing clone"
+  # Do NOT `|| true` this away: a failed/ff-only pull on a shallow clone
+  # silently leaves STALE code in place (that is how the old top-level
+  # `import playwright` crash survived on devices). Hard-reset to the
+  # fetched branch instead; .env / qwen_browser_data are untracked and
+  # survive the reset. If anything fails, wipe and re-clone.
+  if git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH" && \
+     git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"; then
+    c_ok "Code updated to latest $BRANCH"
+  else
+    c_warn "git update failed — forcing a fresh clone"
+    fresh_clone
+  fi
+else
+  fresh_clone
 fi
 
 cd "$INSTALL_DIR"
+
+# Self-heal guard: the checked-out code must not import Playwright at
+# module top level (crash on Termux, where Playwright can never exist).
+if [ -f open_agent/qwen_browser.py ] && \
+   grep -qE "^(from|import)[[:space:]]+playwright" open_agent/qwen_browser.py; then
+  c_warn "Stale code detected (top-level playwright import) — forcing fresh clone"
+  fresh_clone
+  cd "$INSTALL_DIR"
+  if grep -qE "^(from|import)[[:space:]]+playwright" open_agent/qwen_browser.py; then
+    c_err "Repository still ships a top-level playwright import. Report this bug."
+    exit 1
+  fi
+fi
+c_ok "Running commit: $(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 c_info "Python virtualenv + dependencies"
 # Isolated venv. Do NOT use --system-site-packages: Termux's system
@@ -220,6 +247,17 @@ cat > "$INSTALL_DIR/oa" << 'LAUNCH'
 #!/usr/bin/env bash
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+# Best-effort self-update so bug fixes actually reach the device.
+# Skip with OA_NO_UPDATE=1 (offline / hacked locally).
+if [ -z "${OA_NO_UPDATE:-}" ] && [ -d .git ] && command -v git >/dev/null 2>&1; then
+  BRANCH="${OPEN_AGENT_BRANCH:-main}"
+  if git fetch --depth 1 origin "$BRANCH" >/dev/null 2>&1 && \
+     git reset --hard "origin/$BRANCH" >/dev/null 2>&1; then
+    echo "[*] Code is up to date ($(git rev-parse --short HEAD 2>/dev/null))"
+  else
+    echo "[!] Update check failed (offline?) — running local copy"
+  fi
+fi
 if [ -f .venv/bin/activate ]; then
   # shellcheck disable=SC1091
   . .venv/bin/activate

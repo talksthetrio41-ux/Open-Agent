@@ -73,6 +73,18 @@ def main(argv: list[str] | None = None) -> int:
 
     print(BANNER)
 
+    # Print the running commit so crash screenshots show whether the
+    # device is on stale code.
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if commit:
+            print(f"[*] Open Agent commit: {commit}")
+    except Exception:
+        pass
+
     if is_termux():
         # Keep the radio up while the tunnel is live
         for lock_cmd in (("termux-wake-lock",),):
