@@ -54,3 +54,15 @@ def test_start_detects_dead_chromium():
 def test_ensure_page_retries():
     body = QB.split("async def _ensure_page", 1)[1].split("async def ", 1)[0]
     assert "for attempt in (1, 2)" in body
+
+
+def test_ld_preload_stripped_on_android():
+    """Termux's LD_PRELOAD=libtermux-exec.so breaks Chromium's re-exec of
+    /proc/self/exe ('CANNOT LINK EXECUTABLE ... not accessible for the
+    namespace'). It must be stripped from the browser environment."""
+    assert 'env.pop("LD_PRELOAD", None)' in CDP
+
+
+def test_crashpad_noise_disabled():
+    assert "--disable-crash-reporter" in CDP
+    assert "--disable-breakpad" in CDP

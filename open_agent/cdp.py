@@ -120,6 +120,10 @@ ANDROID_CHROME_ARGS = [
     "--disable-software-rasterizer",
     "--renderer-process-limit=1",
     "--remote-allow-origins=*",
+    # crashpad cannot read /sys cpufreq on Android and spams the log
+    "--disable-crash-reporter",
+    "--disable-breakpad",
+    "--noerrdialogs",
 ]
 
 
@@ -643,6 +647,14 @@ class CdpChrome:
         env = os.environ.copy()
         # Headless Chromium on Termux still probes DISPLAY; a dummy value avoids a hard abort.
         env.setdefault("DISPLAY", ":0")
+        if is_android():
+            # Termux globally sets LD_PRELOAD=$PREFIX/lib/libtermux-exec.so.
+            # Chromium re-execs /proc/self/exe inside the Android runtime
+            # linker namespace, where Termux libs are NOT accessible:
+            #   CANNOT LINK EXECUTABLE "/proc/self/exe": library
+            #   ".../libtermux-exec.so" ... is not accessible for the namespace
+            # Strip it for the browser process tree.
+            env.pop("LD_PRELOAD", None)
         # Chromium is very chatty on stderr. A PIPE nobody drains deadlocks the
         # browser once the buffer fills (launch then "times out" for no reason).
         # Log to a file instead — it also makes remote diagnosis possible.
