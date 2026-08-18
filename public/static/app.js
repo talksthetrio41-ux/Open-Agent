@@ -47,15 +47,23 @@
       .replace(/>/g, "&gt;");
   }
 
+  const ROLE_META = {
+    user: ["You", "fa-solid fa-user"],
+    assistant: ["Qwen", "fa-solid fa-robot"],
+    tool: ["Tool", "fa-solid fa-terminal"],
+    system: ["System", "fa-solid fa-circle-info"],
+  };
+
+  function whoHtml(role) {
+    const [label, icon] = ROLE_META[role] || [role, "fa-solid fa-circle-info"];
+    return `<span class="who"><i class="${icon}"></i>${label}</span>`;
+  }
+
   function addMsg(role, text, extraClass) {
     hideEmpty();
     const div = document.createElement("article");
     div.className = `msg ${role}${extraClass ? " " + extraClass : ""}`;
-    const who =
-      role === "user" ? "You" :
-      role === "assistant" ? "Qwen" :
-      role === "tool" ? "Tool" : "System";
-    div.innerHTML = `<span class="who">${who}</span>${esc(text)}`;
+    div.innerHTML = `${whoHtml(role)}<br>${esc(text)}`;
     els.transcript.appendChild(div);
     els.transcript.scrollTop = els.transcript.scrollHeight;
     return div;
@@ -65,7 +73,7 @@
     hideEmpty();
     const div = document.createElement("article");
     div.className = `msg ${role}`;
-    div.innerHTML = `<span class="who">${role === "assistant" ? "Qwen" : role}</span>`;
+    div.innerHTML = whoHtml(role) + "<br>";
     const body = document.createElement("span");
     body.className = "stream-body";
     div.appendChild(body);
@@ -93,6 +101,7 @@
   function showEmpty() {
     els.transcript.innerHTML = `
       <div class="empty">
+        <div class="hero"><i class="fa-solid fa-bolt"></i></div>
         <h2>Ready when you are</h2>
         <p>Connect Qwen, optionally link a GitHub repo, then describe a coding task.
         The phone runs commands; files go to your repo.</p>

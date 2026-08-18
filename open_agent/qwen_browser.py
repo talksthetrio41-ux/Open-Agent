@@ -104,7 +104,15 @@ class QwenBrowserAutomator:
 
     async def start(self) -> None:
         if self._context is not None:
-            return
+            # A cached context is useless if the Chromium process died.
+            if self._cdp_chrome is not None and not self._cdp_chrome.is_alive():
+                logger.warning("Chromium process exited — restarting browser session.")
+                try:
+                    await self.close()
+                except Exception:
+                    pass
+            else:
+                return
         os.makedirs(self.user_data_dir, exist_ok=True)
         if self._use_cdp:
             await self._start_cdp()
@@ -265,25 +273,45 @@ class QwenBrowserAutomator:
             logger.info("Auto-login successful.")
         return ok
 
+    async def _relaunch(self, reason: str) -> None:
+        """Chromium on Termux can die mid-navigation; fully reset and retry once."""
+        logger.warning("Browser session lost (%s) — relaunching Chromium.", reason)
+        try:
+            await self.close()
+        except Exception:
+            pass
+
     async def login(self, username: str, password: str) -> Dict[str, str]:
         self.set_credentials(username, password)
-        await self.start()
-        page = await self._context.new_page()
-        try:
-            await page.goto(AUTH_URL, wait_until="domcontentloaded", timeout=45_000)
-            await asyncio.sleep(1.5)
-            ok = await self._ensure_logged_in(page)
-            await self._persist_session(page)
-            return {
-                "ok": "true" if ok or self.captured_token else "false",
-                "token": (self.captured_token or "")[:24],
-                "username": self.username,
-            }
-        finally:
+        last_exc: Optional[Exception] = None
+        for attempt in (1, 2):
             try:
-                await page.close()
-            except Exception:
-                pass
+                await self.start()
+                page = await self._context.new_page()
+                try:
+                    await page.goto(AUTH_URL, wait_until="domcontentloaded", timeout=45_000)
+                    await asyncio.sleep(1.5)
+                    ok = await self._ensure_logged_in(page)
+                    await self._persist_session(page)
+                    return {
+                        "ok": "true" if ok or self.captured_token else "false",
+                        "token": (self.captured_token or "")[:24],
+                        "username": self.username,
+                    }
+                finally:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 1:
+                    await self._relaunch(str(exc))
+                    continue
+                raise RuntimeError(
+                    f"Qwen login failed twice. Last error: {exc}"
+                ) from exc
+        raise RuntimeError(f"Qwen login failed: {last_exc}")
 
     async def reset_chat(self) -> None:
         if self._page and not self._page.is_closed():
@@ -306,15 +334,26 @@ class QwenBrowserAutomator:
             pass
 
     async def _ensure_page(self) -> Any:
-        await self.start()
-        if self._page is None or self._page.is_closed():
-            self._page = await self._context.new_page()
-            logger.info("Opening %s", CHAT_URL)
-            await self._page.goto(CHAT_URL, wait_until="domcontentloaded")
-            await asyncio.sleep(2)
-            await self._ensure_logged_in(self._page)
-            await self._dismiss_cookie(self._page)
-        return self._page
+        last_exc: Optional[Exception] = None
+        for attempt in (1, 2):
+            try:
+                await self.start()
+                if self._page is None or self._page.is_closed():
+                    self._page = await self._context.new_page()
+                    logger.info("Opening %s", CHAT_URL)
+                    await self._page.goto(CHAT_URL, wait_until="domcontentloaded")
+                    await asyncio.sleep(2)
+                    await self._ensure_logged_in(self._page)
+                    await self._dismiss_cookie(self._page)
+                return self._page
+            except Exception as exc:
+                last_exc = exc
+                self._page = None
+                if attempt == 1:
+                    await self._relaunch(str(exc))
+                    continue
+                raise
+        raise last_exc  # unreachable, keeps type-checkers happy
 
     async def stream_chat_browser(
         self,

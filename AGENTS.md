@@ -119,6 +119,10 @@ On first visit the GUI asks for **Qwen email + password**. Session cookies live 
 - Stream only `.qwen-markdown, .markdown-body`. Ignore “Skip” / “Thinking completed”.
 - `extract_bash_command` must normalize `\xa0` and strip DOM line numbers (`1\n2\n3…`) plus duplicate `bash`/`sh` headers.
 - Always `env=os.environ.copy()` for subprocesses.
+- **Never** pipe Chromium's stderr (`stderr=subprocess.PIPE`) without draining it — the browser deadlocks once the buffer fills. Log to `.runtime/chromium.log` instead (also used for crash diagnostics).
+- On Android, try `--headless=new --no-zygote` **before** `--single-process`: single-process Chromium often crashes *while navigating* heavy SPAs (chat.qwen.ai), surfacing as a bare httpx "All connection attempts failed" at login.
+- CDP HTTP helpers must raise `CdpError` with context (port, process state, log tail) — never leak raw httpx `ConnectError` to the GUI.
+- `qwen_browser.login()` / `_ensure_page()` must relaunch Chromium and retry once when the browser process died; `start()` must detect a dead process instead of reusing a cached context.
 - Termux Chromium lives in `x11-repo`. `cloudflared` lives in `tur-repo`. Enable those repos *before* installing the packages.
 - Chromium binary may be `$PREFIX/lib/chromium/chromium`, not only `$PREFIX/bin/chromium`.
 - The public tunnel is HTTPS. `/api/unlock` must set `Secure` on the PIN cookie when `X-Forwarded-Proto: https` so mobile Chrome keeps the session.

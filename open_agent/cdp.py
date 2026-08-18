@@ -17,6 +17,7 @@ import logging
 import os
 import socket
 import subprocess
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
@@ -509,6 +510,35 @@ class CdpChrome:
         self.http_base = ""
         self._request_handlers: List[Callable] = []
         self._default_page: Optional[CdpPage] = None
+        log_dir = Path(self.user_data_dir).parent / ".runtime"
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            log_dir = Path(self.user_data_dir)
+        self.log_path = log_dir / "chromium.log"
+
+    def is_alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def _log_tail(self, limit: int = 600) -> str:
+        try:
+            data = self.log_path.read_bytes()[-4000:]
+            return data.decode("utf-8", "replace").strip()[-limit:]
+        except OSError:
+            return ""
+
+    def _dead_error(self, exc: Exception) -> "CdpError":
+        state = (
+            f"process exited with code {self.proc.returncode}"
+            if self.proc is not None and self.proc.poll() is not None
+            else "process state unknown"
+        )
+        tail = self._log_tail()
+        hint = f" Last Chromium log: {tail}" if tail else ""
+        return CdpError(
+            f"Chromium is not reachable at {self.http_base or '127.0.0.1'} ({state}).{hint} "
+            f"Full log: {self.log_path}. Root cause detail: {exc}"
+        )
 
     def on(self, event: str, handler: Callable) -> None:
         if event == "request":
@@ -590,6 +620,10 @@ class CdpChrome:
         sets = []
         if self.headless:
             if is_android():
+                # --single-process often crashes while NAVIGATING heavy SPAs
+                # (chat.qwen.ai), which surfaced as "All connection attempts
+                # failed" at login. Prefer multi-process headless first.
+                sets.append(base + ["--headless=new", "--no-zygote"])
                 sets.append(base + ["--headless=new", "--single-process", "--no-zygote"])
                 sets.append(base + ["--headless", "--single-process", "--no-zygote"])
                 sets.append(base + ["--headless=new"])
@@ -609,23 +643,27 @@ class CdpChrome:
         env = os.environ.copy()
         # Headless Chromium on Termux still probes DISPLAY; a dummy value avoids a hard abort.
         env.setdefault("DISPLAY", ":0")
-        self.proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            env=env,
-        )
+        # Chromium is very chatty on stderr. A PIPE nobody drains deadlocks the
+        # browser once the buffer fills (launch then "times out" for no reason).
+        # Log to a file instead — it also makes remote diagnosis possible.
+        log_file = open(self.log_path, "ab", buffering=0)
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+        finally:
+            # Popen dup()s the fd into the child; our copy can go.
+            log_file.close()
         deadline = asyncio.get_event_loop().time() + timeout
         last = ""
         async with httpx.AsyncClient(timeout=2.0) as client:
             while asyncio.get_event_loop().time() < deadline:
                 if self.proc.poll() is not None:
-                    err = ""
-                    try:
-                        err = (self.proc.stderr.read() or b"").decode("utf-8", "replace")[-800:]
-                    except Exception:
-                        pass
-                    raise CdpError(f"Chromium exited ({self.proc.returncode}): {err or 'no stderr'}")
+                    err = self._log_tail(800)
+                    raise CdpError(f"Chromium exited ({self.proc.returncode}): {err or 'no output'}")
                 try:
                     resp = await client.get(f"{self.http_base}/json/version")
                     if resp.status_code == 200:
@@ -638,15 +676,20 @@ class CdpChrome:
         raise CdpError(f"Timed out waiting for DevTools on {self.http_base} ({last})")
 
     async def _targets(self) -> list:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{self.http_base}/json/list")
-            resp.raise_for_status()
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self.http_base}/json/list")
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as exc:
+            raise self._dead_error(exc) from exc
 
     async def new_page(self) -> CdpPage:
         # Reuse the first about:blank tab to save RAM on phones.
         try:
             targets = await self._targets()
+        except CdpError:
+            raise
         except Exception:
             targets = []
         reusable = None
@@ -663,12 +706,15 @@ class CdpChrome:
             page = CdpPage(self, reusable["webSocketDebuggerUrl"], reusable.get("id") or "")
             await page._ensure()
             return page
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.put(f"{self.http_base}/json/new?{quote('about:blank', safe='')}")
-            if resp.status_code >= 400:
-                resp = await client.get(f"{self.http_base}/json/new?{quote('about:blank', safe='')}")
-            resp.raise_for_status()
-            data = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.put(f"{self.http_base}/json/new?{quote('about:blank', safe='')}")
+                if resp.status_code >= 400:
+                    resp = await client.get(f"{self.http_base}/json/new?{quote('about:blank', safe='')}")
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            raise self._dead_error(exc) from exc
         ws = data.get("webSocketDebuggerUrl")
         if not ws:
             raise CdpError(f"Chromium did not return a page websocket: {data}")
