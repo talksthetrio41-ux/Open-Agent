@@ -270,6 +270,16 @@ exec python3 -m open_agent "$@"
 LAUNCH
 chmod +x "$INSTALL_DIR/oa"
 
+# Global `oa` command so it works from any directory, not just $INSTALL_DIR
+if is_termux && [ -n "${PREFIX:-}" ] && [ -d "$PREFIX/bin" ]; then
+  cat > "$PREFIX/bin/oa" << EOF
+#!$PREFIX/bin/bash
+exec "$INSTALL_DIR/oa" "\$@"
+EOF
+  chmod +x "$PREFIX/bin/oa" || true
+  c_ok "Global command installed: oa (works from any directory)"
+fi
+
 # Termux widget / home shortcut helper
 if is_termux && [ -d "$HOME/.shortcuts" ]; then
   cat > "$HOME/.shortcuts/Open-Agent" << EOF

@@ -107,11 +107,39 @@ def _listener_pids(port: int) -> list[int]:
     return pids
 
 
+def _cmdline_pids() -> list[int]:
+    """PIDs whose cmdline looks like a stale Open Agent / uvicorn server.
+
+    Fallback for Android 10+, where SELinux blocks reading /proc/net/tcp so
+    _listener_pids() sees nothing.
+    """
+    me = os.getpid()
+    pids: list[int] = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return pids
+    for pid_dir in entries:
+        if not pid_dir.isdigit() or int(pid_dir) == me:
+            continue
+        try:
+            with open(f"/proc/{pid_dir}/cmdline", "rb") as fh:
+                cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if "open_agent" in cmd or "uvicorn" in cmd:
+            pids.append(int(pid_dir))
+    return pids
+
+
 def _free_port(port: int) -> bool:
     """Kill any stale Open Agent server still bound to `port`. Returns True when free."""
     if not _port_busy(port):
         return True
     pids = _listener_pids(port)
+    if not pids:
+        # /proc/net/tcp is unreadable on Android 10+; fall back to cmdline scan.
+        pids = _cmdline_pids()
     if not pids:
         return False
     print(f"[!] Port {port} is held by stale process(es) {pids} — terminating")

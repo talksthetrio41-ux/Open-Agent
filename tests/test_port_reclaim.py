@@ -52,3 +52,17 @@ def test_port_reclaimed_before_tunnel_and_uvicorn():
 def test_no_reuseaddr_in_busy_probe():
     probe = MAIN_SRC.split("def _port_busy", 1)[1].split("def ", 1)[0]
     assert "setsockopt" not in probe
+
+
+def test_cmdline_fallback_exists_for_android_proc_lockdown():
+    """Android 10+ SELinux blocks /proc/net/tcp, so _listener_pids() finds
+    nothing. _free_port must fall back to a /proc/*/cmdline scan."""
+    assert "_cmdline_pids" in MAIN_SRC
+    assert "open_agent" in MAIN_SRC and "uvicorn" in MAIN_SRC
+    free_body = MAIN_SRC.split("def _free_port", 1)[1].split("def ", 1)[0]
+    assert "_cmdline_pids()" in free_body
+
+
+def test_installer_writes_global_oa_command():
+    install = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert '"$PREFIX/bin/oa"' in install
