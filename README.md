@@ -10,7 +10,7 @@ This is **not** a Cloudflare Pages site. The GUI is a local FastAPI server. Term
 curl -fsSL https://raw.githubusercontent.com/talksthetrio41-ux/Open-Agent/main/install.sh | bash
 ```
 
-The script enables `x11-repo` / `tur-repo`, installs git, Python, Chromium, and `cloudflared`, clones this repo to `~/open-agent`, installs **`requirements-termux.txt`** (never Playwright), then launches the agent. Termux prints something like:
+The script enables `x11-repo` / `tur-repo`, installs git, Python, Chromium, and `cloudflared`, clones this repo to `~/open-agent`, installs **`requirements-termux.txt`** as wheels only (never Playwright, never compiles Rust `pydantic-core`), then launches the agent. Termux prints something like:
 
 ```
 Public GUI : https://xxxx.trycloudflare.com

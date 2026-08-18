@@ -23,7 +23,7 @@ That script:
 1. Enables `x11-repo` then `pkg install` git, python, **system Chromium**, `termux-api`
 2. Enables `tur-repo` then `pkg install cloudflared`
 3. Clones this repo to `~/open-agent`
-4. Creates `.venv` and installs **`requirements-termux.txt`** (httpx, FastAPI, websockets, …). It **never** `pip install playwright` — PyPI has no `aarch64-linux-android` wheel
+4. Creates `.venv` and installs **`requirements-termux.txt`** as **wheels only** (`--only-binary=:all:`). Pins `pydantic<2` so Termux never compiles Rust `pydantic-core`. It **never** `pip install playwright` — PyPI has no `aarch64-linux-android` wheel
 5. Writes `.env` with `OPEN_AGENT_BROWSER=cdp`, `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`, and `CHROMIUM_PATH` pointing at Termux Chromium (`$PREFIX/bin/chromium` or `$PREFIX/lib/chromium/chromium`)
 6. Starts `python -m open_agent`, which drives Chromium over **CDP** (`open_agent/cdp.py`)
 7. Prints the **public HTTPS URL** and a **4-digit PIN**
@@ -111,6 +111,7 @@ On first visit the GUI asks for **Qwen email + password**. Session cookies live 
 ## Critical Playwright / Termux / CDP gotchas (do not regress)
 
 - **Never** `pip install playwright` on Termux. PyPI has **no** `aarch64-linux-android` wheel (`from versions: none`). Use `requirements-termux.txt` + `open_agent/cdp.py`.
+- **Never** `pip install pydantic>=2` on Termux. `pydantic-core` is Rust and has **no** Android wheel; pip hangs at `Installing build dependencies` (screenshot: `pydantic_core-*.tar.gz`). Pin `pydantic<2` + `fastapi<0.126` and always `pip install --only-binary=:all:`.
 - **Never** `import playwright` at module top-level in `qwen_browser.py`. Android must be able to import the package without Playwright installed.
 - Default backend is CDP on Android (`prefer_cdp()`). Force with `OPEN_AGENT_BROWSER=cdp` or `=playwright`.
 - **Never** `context.set_extra_http_headers({"Authorization": ...})`. It breaks Qwen’s CDN and websockets (unstyled page, dead input).

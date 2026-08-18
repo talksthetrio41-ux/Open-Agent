@@ -1,13 +1,20 @@
-# Termux / Android — NO Playwright.
+# Termux / Android — NO Playwright, NO Rust compile.
 # Playwright publishes no wheels for aarch64-linux-android and its
 # driver is a glibc binary that cannot run on Bionic. The agent drives
 # Termux's system Chromium over Chrome DevTools Protocol instead.
-httpx>=0.27.0
-fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic>=2.6.0
-sse-starlette>=2.0.0
-python-dotenv>=1.0.0
-aiofiles>=23.2.1
-websockets>=12.0
-pytest>=8.0.0
+#
+# pydantic>=2 pulls pydantic-core (Rust). PyPI has no Android wheel, so
+# pip downloads the .tar.gz and hangs on "Installing build dependencies"
+# while it tries to compile maturin. Pin pydantic 1.x (pure-Python
+# py3-none-any wheel) and an older FastAPI that still accepts it.
+# install.sh MUST pass --only-binary=:all: so pip never falls back to
+# a source build if these pins drift.
+httpx>=0.27.0,<1.0.0
+fastapi>=0.110.0,<0.126.0
+uvicorn>=0.28.0,<0.35.0
+pydantic>=1.10.13,<2.0.0
+sse-starlette>=2.0.0,<2.3.0
+python-dotenv>=1.0.0,<2.0.0
+aiofiles>=23.2.1,<25.0.0
+websockets>=12.0,<16.0.0
+pytest>=8.0.0,<10.0.0

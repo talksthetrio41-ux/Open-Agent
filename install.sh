@@ -7,6 +7,10 @@
 #
 # Playwright has NO wheels for Android (aarch64-linux-android). This
 # script must never `pip install playwright` inside Termux.
+#
+# pydantic 2.x has NO Android wheel either. pip then downloads
+# pydantic_core-*.tar.gz and hangs at "Installing build dependencies"
+# (needs Rust/maturin). Always install Termux deps as wheels only.
 
 set -euo pipefail
 
@@ -59,11 +63,12 @@ if is_termux; then
   export DEBIAN_FRONTEND=noninteractive
   pkg update -y || true
 
-  # Core tools first. Do NOT install rust just to compile Playwright —
-  # Playwright cannot be installed on Android at all.
-  pkg install -y git python python-pip which curl wget \
-    libffi openssl termux-api || \
-    pkg install -y git python which curl wget
+  # Core tools first. Do NOT install rust just to compile Playwright /
+  # pydantic-core — neither can be built on a phone in any useful way.
+  # python-ensurepip-wheels makes `python -m venv` ship pip.
+  pkg install -y git python python-pip python-ensurepip-wheels \
+    which curl wget libffi openssl termux-api || \
+    pkg install -y git python python-pip which curl wget
 
   # Chromium lives in x11-repo. Enable it *before* asking for chromium.
   if ! need_cmd chromium && ! need_cmd chromium-browser; then
@@ -105,23 +110,70 @@ fi
 cd "$INSTALL_DIR"
 
 c_info "Python virtualenv + dependencies"
-"$PYTHON_BIN" -m venv .venv
+# Isolated venv. Do NOT use --system-site-packages: Termux's system
+# pydantic/httpx (when present) can fight the pinned wheels below.
+# Drop a leftover venv from a previous hung pydantic-core compile.
+if is_termux && [ -d .venv ]; then
+  c_info "Recreating virtualenv (clears any half-built pydantic-core)"
+  rm -rf .venv
+fi
+if ! "$PYTHON_BIN" -m venv .venv; then
+  c_warn "python -m venv failed — retrying without bundled pip"
+  "$PYTHON_BIN" -m venv --without-pip .venv
+fi
 # shellcheck disable=SC1091
 . .venv/bin/activate
-pip install --upgrade pip wheel setuptools
+if ! command -v pip >/dev/null 2>&1; then
+  c_warn "venv has no pip — bootstrapping with ensurepip"
+  python -m ensurepip --upgrade --default-pip || true
+fi
+if ! command -v pip >/dev/null 2>&1; then
+  c_err "pip is not available inside the venv. Install python-pip and retry."
+  exit 1
+fi
+# Keep pip itself on a wheel. setuptools/wheel are not needed on Termux
+# because we never compile anything (see --only-binary below).
+if is_termux; then
+  pip install --upgrade --only-binary=:all: pip || pip install --upgrade pip
+else
+  pip install --upgrade pip
+fi
 
 if is_termux; then
   # CRITICAL: never pip-install playwright on Android.
   # PyPI has no aarch64-linux-android wheel (from versions: none).
+  #
+  # CRITICAL: never let pip compile pydantic-core / maturin. pydantic 2.x
+  # has no Android wheel; pip downloads pydantic_core-*.tar.gz and hangs
+  # at "Installing build dependencies" (needs a Rust toolchain that
+  # Termux phones cannot realistically build). requirements-termux.txt
+  # pins pydantic 1.x + FastAPI <0.126, both py3-none-any wheels.
   export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+  export PIP_ONLY_BINARY=":all:"
   REQ_FILE="requirements-termux.txt"
+  PIP_TERMUX=(pip install --only-binary=:all: --prefer-binary --no-compile)
   if [ ! -f "$REQ_FILE" ]; then
-    c_warn "$REQ_FILE missing — installing a Playwright-free subset"
-    pip install 'httpx>=0.27.0' 'fastapi>=0.110.0' 'uvicorn>=0.28.0' \
-      'pydantic>=2.6.0' 'sse-starlette>=2.0.0' 'python-dotenv>=1.0.0' \
-      'aiofiles>=23.2.1' 'websockets>=12.0' 'pytest>=8.0.0'
+    c_warn "$REQ_FILE missing — installing a Playwright-free, no-compile subset"
+    "${PIP_TERMUX[@]}" \
+      'httpx>=0.27.0,<1.0.0' \
+      'fastapi>=0.110.0,<0.126.0' \
+      'uvicorn>=0.28.0,<0.35.0' \
+      'pydantic>=1.10.13,<2.0.0' \
+      'sse-starlette>=2.0.0,<2.3.0' \
+      'python-dotenv>=1.0.0,<2.0.0' \
+      'aiofiles>=23.2.1,<25.0.0' \
+      'websockets>=12.0,<16.0.0' \
+      'pytest>=8.0.0,<10.0.0'
   else
-    pip install -r "$REQ_FILE"
+    c_info "Installing Termux wheels only (never compile pydantic-core)"
+    "${PIP_TERMUX[@]}" -r "$REQ_FILE"
+  fi
+  # Prove we did not pull the Rust extension. Fail loud if we did.
+  if python -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('pydantic_core') is None else 1)"; then
+    c_ok "pydantic is the pure-Python 1.x wheel (no pydantic-core / Rust)"
+  else
+    c_err "pydantic-core got installed — Termux cannot compile that. Re-run with a fresh venv."
+    exit 1
   fi
 
   CHROME_PATH="$(command -v chromium-browser || command -v chromium || true)"

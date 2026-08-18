@@ -14,6 +14,7 @@ Summary for agents working in this repo:
 - File create/edit/delete/commit uses the user's **GitHub repo** (`open_agent/github_fs.py`).
 - GUI lives in `public/` and is served by `open_agent/server.py`.
 - One-command install is `install.sh`; it must print the Cloudflare tunnel URL + PIN and use `requirements-termux.txt` on Android.
+- Termux pip must stay wheel-only (`--only-binary=:all:`). Never let `pydantic>=2` / `pydantic-core` compile from source.
 - Do **not** inject `Authorization` headers into the browser context.
 - Send button selector: `button.send-button, button[aria-label='send' i]`.
 - Stream only `.qwen-markdown, .markdown-body`.

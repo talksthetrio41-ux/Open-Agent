@@ -124,26 +124,35 @@ def test_install_sh_never_pips_playwright_on_termux():
     assert "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD" in text
     assert "x11-repo" in text
     assert "tur-repo" in text
-    assert "pip install -r requirements-termux.txt" in text.replace('"$REQ_FILE"', "requirements-termux.txt") or (
-        'REQ_FILE="requirements-termux.txt"' in text and "pip install -r \"$REQ_FILE\"" in text
-    )
-    # The Termux Python-deps branch must never install the desktop file.
+    assert "--only-binary=:all:" in text
+    assert "pydantic-core" in text
+    assert 'REQ_FILE="requirements-termux.txt"' in text
+    assert '-r "$REQ_FILE"' in text
+    # The Termux Python-deps branch must never install the desktop file
+    # and must never ask pip to compile pydantic 2 / playwright.
     start = text.find("# CRITICAL: never pip-install playwright")
     assert start != -1
     termux_pip = text[start : text.find("else", start)]
     assert "requirements.txt" not in termux_pip
     assert "playwright install" not in termux_pip
+    assert "pydantic>=2" not in termux_pip
 
 
 def test_termux_requirements_exclude_playwright():
     lines = (ROOT / "requirements-termux.txt").read_text(encoding="utf-8").splitlines()
+    reqs = []
     for line in lines:
         stripped = line.strip().lower()
         if stripped.startswith("#") or not stripped:
             continue
         assert "playwright" not in stripped
+        reqs.append(stripped)
     text = "\n".join(lines)
+    joined = "\n".join(reqs)
     assert "websockets" in text
+    assert "pydantic>=1.10.13,<2.0.0" in joined
+    assert "fastapi>=0.110.0,<0.126.0" in joined
+    assert "pydantic>=2" not in joined
     desktop = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     assert "playwright" in desktop
 
